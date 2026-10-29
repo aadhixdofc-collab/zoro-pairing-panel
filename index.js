@@ -3,17 +3,37 @@ const path = require('path');
 const axios = require('axios');
 const { execSync } = require('child_process');
 const express = require('express');
+const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 8000;
+const PORT = process.env.SERVER_PORT || process.env.PORT || 8000;
 
+app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 const SESSIONS_DIR = path.join(__dirname, 'sessions');
 if (!fs.existsSync(SESSIONS_DIR)) {
     fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+}
+
+// ============================================
+// INDIAN TIME HELPER (Asia/Kolkata)
+// ============================================
+function getIndianDateTime() {
+    const now = new Date();
+    
+    const dateOptions = { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' };
+    const currentDate = new Intl.DateTimeFormat('en-GB', dateOptions).format(now);
+    
+    const timeOptions = { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true };
+    const currentTime = new Intl.DateTimeFormat('en-GB', timeOptions).format(now);
+    
+    const dayOptions = { timeZone: 'Asia/Kolkata', weekday: 'long' };
+    const currentDay = new Intl.DateTimeFormat('en-GB', dayOptions).format(now).toLowerCase();
+    
+    return { currentDate, currentTime, currentDay };
 }
 
 // ============================================
@@ -182,9 +202,9 @@ async function checkAndInstallFFmpeg() {
 }
 
 // ============================================
-// CORE SESSION INITIALIZER
+// UNIFIED ROBUST MULTI-SESSION RUNNER & PAIRING
 // ============================================
-async function initializeSession(phone) {
+async function startZoroSession(phone, res = null) {
     const sessionName = `session_${phone}`;
     const sessionPath = path.join(SESSIONS_DIR, sessionName);
 
@@ -203,37 +223,124 @@ async function initializeSession(phone) {
             version,
             logger: pino({ level: 'silent' }),
             printQRInTerminal: false,
-            browser: ["Ubuntu", "Chrome", "20.0.04"],
             auth: {
                 creds: state.creds,
                 keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
             },
             markOnlineOnConnect: true,
             generateHighQualityLinkPreview: true,
-            syncFullHistory: true,
+            syncFullHistory: false,
             msgRetryCounterCache,
         });
 
-        store.bind(sock.ev);
+        if (store && store.bind) {
+            store.bind(sock.ev);
+        }
 
         sock.ev.on('creds.update', saveCreds);
 
+        if (!sock.authState.creds.registered && res) {
+            setTimeout(async () => {
+                try {
+                    let code = await sock.requestPairingCode(phone);
+                    code = code?.match(/.{1,4}/g)?.join("-") || code;
+                    if (!res.headersSent) {
+                        res.json({ code });
+                    }
+                } catch (err) {
+                    console.error("Pairing code error for:", phone, err);
+                    if (!res.headersSent) {
+                        res.json({ error: 'Failed to request pairing code. Try again.' });
+                    }
+                }
+            }, 3000);
+        }
+
+        let hasSentConnectMsg = false;
+
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
+            
             if (connection === "open") {
-                console.log(`✅ Session connected successfully for: ${phone}`);
+                const { currentDate, currentTime, currentDay } = getIndianDateTime();
+
+                console.log('\n╔════════════════════════════════════╗');
+                console.log(`║  ✅ ZORO MD CONNECTED SUCCESSFUL!  ║`);
+                console.log('╠════════════════════════════════════╣');
+                console.log(`║ 📱 Phone: ${phone}                 ║`);
+                console.log(`║ ⏰ Time: ${currentTime}, ${currentDate} ║`);
+                console.log('╚════════════════════════════════════╝\n');
+
+                if (!hasSentConnectMsg) {
+                    hasSentConnectMsg = true;
+                    try {
+                        const mode = process.env.MODE || "private";
+
+                        const headerText = `*ʜᴇʏ ᴢᴏʀᴏ <3*`;
+
+                        const connectMessage = `
+\`ᴢᴏʀᴏxᴍᴅ -ᴍɪɴɪ sᴛᴀʀᴛᴇᴅ\`
+╭═══════════════⟥⟢
+➦ ᴠᴇʀsᴏɴ : 0.0.1
+➦ ᴘʀᴇᴍɪx : [.]
+➦ ᴍᴏᴅᴇ : ${mode}
+➦ ᴏᴡɴᴇʀ : 918136880986
+╰═══════════════⟥⟢
+\`ʙᴀsɪᴄ - ᴄᴏᴍᴍᴀɴᴅs\`
+╭═══════════════⟥⟢
+➦ .ᴘɪɴɢ - sᴇᴇ ʀᴇsᴘᴏɴᴄᴇ sᴘᴇᴇᴅ
+➦ .ᴍᴇɴᴜ - ᴛᴏ sᴀᴡ ᴀʟʟ ᴄᴍᴅs
+➦ .ᴀʟɪᴠᴇ - sᴇᴇ ʙᴏᴛ ʀᴜɴᴛɪᴍᴇ
+➦ .ᴏᴡɴᴇʀ - ᴅᴇᴠᴇʟᴏᴘᴇʀ ᴏғ ʙᴏᴛ
+➦ .ᴘᴀɪʀ - ᴄᴏɴɴᴇᴄᴛ ᴛʜᴇ ʙᴏᴛ
+╰═══════════════⟥⟢
+\`ᴀʙᴏᴜᴛ ᴛʜɪs xᴍᴅ ʙᴏᴛ\`
+╭═══════════════⟥⟢
+➦ ᴅᴀᴛᴇ : ${currentDate}
+➦ ᴛɪᴍᴇ : ${currentTime}
+➦ ᴅᴀʏ : ${currentDay}
+╰═══════════════⟥⟢
+                        `.trim();
+
+                        const targetJid = phone + '@s.whatsapp.net';
+
+                        setTimeout(async () => {
+                            try {
+                                // 1. ആദ്യത്തെ മെസ്സേജ് സെന്റ് ചെയ്യുന്നു
+                                await sock.sendMessage(targetJid, { text: headerText });
+                                
+                                // 2. തൊട്ടുപിന്നാലെ ഫോട്ടോയും ബോക്സ് മെസ്സേജും അയക്കുന്നു
+                                setTimeout(async () => {
+                                    await sock.sendMessage(targetJid, { 
+                                        image: { url: "https://files.catbox.moe/39mfsh.png" }, 
+                                        caption: connectMessage 
+                                    });
+                                    console.log(`📤 Connected messages successfully sent to target: ${targetJid}`);
+                                }, 1000);
+
+                            } catch (sendErr) {
+                                console.error('Error sending messages inside timeout:', sendErr);
+                            }
+                        }, 4000);
+
+                    } catch (err) {
+                        console.error('Failed to prepare connection message:', err);
+                    }
+                }
+
             } else if (connection === 'close') {
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 console.log(`⚠️ Connection closed for ${phone}, status: ${statusCode}`);
+                
                 if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
                     try {
                         fs.rmSync(sessionPath, { recursive: true, force: true });
-                        console.log(`🗑️ Logged out session cleaned up for: ${phone}`);
+                        console.log(`🗑️ Logged out session cleaned up & space freed for: ${phone}`);
                     } catch (e) {
-                        console.error('Error cleaning session:', e);
+                        console.error('Error cleaning session folder:', e);
                     }
                 } else {
-                    setTimeout(() => initializeSession(phone), 5000);
+                    setTimeout(() => startZoroSession(phone), 5000);
                 }
             }
         });
@@ -243,10 +350,10 @@ async function initializeSession(phone) {
                 const mek = chatUpdate.messages[0];
                 if (!mek.message) return;
                 if (mek.key && mek.key.remoteJid === 'status@broadcast') {
-                    await handleStatus(sock, chatUpdate);
+                    if (typeof handleStatus === 'function') await handleStatus(sock, chatUpdate);
                     return;
                 }
-                await handleMessages(sock, chatUpdate, true);
+                if (typeof handleMessages === 'function') await handleMessages(sock, chatUpdate, true);
             } catch (err) {
                 console.error("Error in messages.upsert:", err);
             }
@@ -254,7 +361,7 @@ async function initializeSession(phone) {
 
         sock.ev.on('group-participants.update', async (update) => {
             try {
-                await handleGroupParticipantUpdate(sock, update);
+                if (typeof handleGroupParticipantUpdate === 'function') await handleGroupParticipantUpdate(sock, update);
             } catch (err) {
                 console.error("Error in group-participants.update:", err);
             }
@@ -262,12 +369,12 @@ async function initializeSession(phone) {
 
         return sock;
     } catch (e) {
-        console.error(`❌ Error initializing session for ${phone}:`, e);
+        console.error(`❌ Error in session for ${phone}:`, e);
     }
 }
 
 // ============================================
-// AUTO-RECOVER EXISTING SESSIONS ON STARTUP
+// RESTORE EXISTING SESSIONS ON STARTUP
 // ============================================
 async function restoreExistingSessions() {
     if (fs.existsSync(SESSIONS_DIR)) {
@@ -275,15 +382,15 @@ async function restoreExistingSessions() {
         for (const folder of sessionFolders) {
             if (folder.startsWith('session_')) {
                 const phone = folder.replace('session_', '');
-                console.log(`🔄 Restoring active session for: ${phone}`);
-                initializeSession(phone);
+                console.log(`🔄 Restoring active session on restart for: ${phone}`);
+                startZoroSession(phone);
             }
         }
     }
 }
 
 // ============================================
-// PAIRING DASHBOARD UI
+// DASHBOARD UI
 // ============================================
 app.get('/', (req, res) => {
     res.send(`
@@ -337,68 +444,26 @@ app.get('/', (req, res) => {
 });
 
 // ============================================
-// INSTANT PAIRING ENDPOINT
+// PAIRING ENDPOINT
 // ============================================
 app.get('/pair', async (req, res) => {
-    const phone = req.query.phone;
+    let phone = req.query.phone;
     if (!phone) {
         return res.json({ error: 'Phone number is required' });
     }
+    phone = phone.replace(/[^0-9]/g, '');
 
     const sessionPath = path.join(SESSIONS_DIR, `session_${phone}`);
 
     try {
-        const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, makeCacheableSignalKeyStore } = require('@aadhixd777/baileys');
-        const pino = require("pino");
-
-        const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
-        const { version } = await fetchLatestBaileysVersion();
-
-        const sock = makeWASocket({
-            version,
-            logger: pino({ level: 'silent' }),
-            printQRInTerminal: false,
-            browser: ["Ubuntu", "Chrome", "20.0.04"],
-            auth: {
-                creds: state.creds,
-                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
-            },
-            markOnlineOnConnect: true,
-        });
-
-        if (!sock.authState.creds.registered) {
-            setTimeout(async () => {
-                try {
-                    let code = await sock.requestPairingCode(phone);
-                    code = code?.match(/.{1,4}/g)?.join("-") || code;
-                    if (!res.headersSent) {
-                        res.json({ code });
-                    }
-                } catch (err) {
-                    console.error("Pairing code error:", err);
-                    if (!res.headersSent) {
-                        res.json({ error: 'Failed to request pairing code' });
-                    }
-                }
-            }, 2000);
-        } else {
-            if (!res.headersSent) {
-                res.json({ error: 'Number is already registered/connected' });
-            }
+        if (fs.existsSync(sessionPath)) {
+            fs.rmSync(sessionPath, { recursive: true, force: true });
         }
 
-        sock.ev.on('creds.update', saveCreds);
-
-        sock.ev.on('connection.update', async (update) => {
-            const { connection } = update;
-            if (connection === "open") {
-                console.log(`✅ Instant pair connected successfully for: ${phone}`);
-                initializeSession(phone);
-            }
-        });
+        await startZoroSession(phone, res);
 
     } catch (e) {
-        console.error("Socket Pairing Error:", e);
+        console.error("Pairing Endpoint Error:", e);
         if (!res.headersSent) {
             res.json({ error: 'Internal server error during pairing' });
         }
@@ -421,20 +486,15 @@ async function startBot() {
     await checkAndInstallFFmpeg();
     await restoreExistingSessions();
     
-    require('./settings');
+    try {
+        require('./settings');
+    } catch (e) {
+        console.log('settings.js not loaded yet.');
+    }
     
     console.log('\n\n╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮');
-    console.log(`│     🔥 ZORO MD BOT 🔥            │`);
+    console.log(`│     🔥 ZORO MD PAIRING PANEL 🔥    │`);
     console.log('╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n');
-    
-    console.log('╔════════════════════════════════════╗');
-    console.log('║  ✅ CONNECTION SUCCESSFUL! ✅     ║');
-    console.log('╠════════════════════════════════════╣');
-    console.log('║ 👤 Owner: Aadhixd                  ║');
-    console.log('║ 💎 Version: 3.0.0                  ║');
-    console.log(`║ ⏰ Time: ${new Date().toLocaleString()}  ║`);
-    console.log('║ 🔥 Status: ON FIRE!                ║');
-    console.log('╚════════════════════════════════════╝\n');
 }
 
 startBot().catch(error => {
