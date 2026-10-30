@@ -30,9 +30,11 @@ if (!fs.existsSync(SESSIONS_DIR)) {
 }
 
 // ============================================
-// AUTO TEMP STORAGE CLEANUP (EVERY 2 MINUTES)
+// DUAL TEMP STORAGE CLEANUP SYSTEM (SAFE MODE)
 // ============================================
-function clearTempStorage() {
+
+// 1. General Temp Cleaner (Every 2 Minutes - Safe 3 minutes gap for active files)
+function clearGeneralTempStorage() {
     const tempDirs = [
         path.join(__dirname, 'temp'),
         path.join(__dirname, 'tmp'),
@@ -41,21 +43,76 @@ function clearTempStorage() {
     ];
 
     for (const dir of tempDirs) {
-        if (fs.existsSync(dir)) {
+        if (!fs.existsSync(dir)) {
             try {
-                fs.rmSync(dir, { recursive: true, force: true });
-                console.log(`🗑️ Cleared temp storage folder: ${path.basename(dir)}`);
-            } catch (e) {
-                console.error(`⚠️ Could not clear ${path.basename(dir)}:`, e.message);
-            }
+                fs.mkdirSync(dir, { recursive: true });
+            } catch (e) {}
+            continue;
         }
+
+        try {
+            const files = fs.readdirSync(dir);
+            const now = Date.now();
+            for (const file of files) {
+                if (file === 'songs') continue; // songs ഫോൾഡർ ഇവിടെ സ്കിപ്പ് ചെയ്യും
+
+                const filePath = path.join(dir, file);
+                try {
+                    const stats = fs.statSync(filePath);
+                    // പ്രൊസസ്സിംഗിൽ ഇരിക്കുന്ന ഫയലുകൾ തടസ്സപ്പെടാതിരിക്കാൻ 3 മിനിറ്റിൽ കൂടുതൽ പഴക്കമുള്ളവ മാത്രം ഡിലീറ്റ് ചെയ്യുക
+                    if (now - stats.mtimeMs > 180000) {
+                        fs.rmSync(filePath, { recursive: true, force: true });
+                    }
+                } catch (err) {}
+            }
+        } catch (e) {}
     }
 }
 
-clearTempStorage();
+// 2. Dedicated Song Folder Cleaner (Only clears song files after 5 minutes of safety gap)[span_1](start_span)[span_1](end_span)
+function clearSongTempStorage() {
+    const songDirs = [
+        path.join(__dirname, 'temp', 'songs'),
+        path.join(__dirname, 'tmp', 'songs')
+    ];
+
+    for (const dir of songDirs) {
+        if (!fs.existsSync(dir)) {
+            try {
+                fs.mkdirSync(dir, { recursive: true });
+            } catch (e) {}
+            continue;
+        }
+
+        try {
+            const files = fs.readdirSync(dir);
+            const now = Date.now();
+            for (const file of files) {
+                const filePath = path.join(dir, file);
+                try {
+                    const stats = fs.statSync(filePath);
+                    // സോംഗ് ഡൗൺലോഡിംഗിനും സെൻഡിംഗിനും പക്കാ ടൈം കിട്ടാൻ കൃത്യം 5 മിനിറ്റ് കഴിഞ്ഞു മാത്രം ഡിലീറ്റ് ചെയ്യും[span_2](start_span)[span_2](end_span)
+                    if (now - stats.mtimeMs > 300000) {
+                        fs.rmSync(filePath, { recursive: true, force: true });
+                        console.log(`🎵 Cleared old song temp file: ${file}`);
+                    }
+                } catch (err) {}
+            }
+        } catch (e) {}
+    }
+}
+
+// Run Cleaners on Startup & Intervals
+clearGeneralTempStorage();
+clearSongTempStorage();
+
 setInterval(() => {
-    clearTempStorage();
-}, 120000); // 120000 ms = 2 Minutes
+    clearGeneralTempStorage();
+}, 120000); // Every 2 Minutes for General Temp
+
+setInterval(() => {
+    clearSongTempStorage();
+}, 300000); // Every 5 Minutes for Songs Temp[span_3](start_span)[span_3](end_span)
 
 // ============================================
 // INDIAN TIME HELPER (Asia/Kolkata)
@@ -269,7 +326,7 @@ async function processQueue(phone, sock) {
             try { global.gc(); } catch (e) {}
         }
 
-        // കൃത്യം 8 സെൻ്റ് വെയിറ്റ് ചെയ്ത ശേഷമേ അടുത്ത ആളിന്റെ റിപ്ലൈ പോകൂ
+        // കൃത്യം 8 സെക്കൻഡ് വെയിറ്റ് ചെയ്ത ശേഷമേ അടുത്ത ആളിന്റെ റിപ്ലൈ പോകൂ
         await new Promise(resolve => setTimeout(resolve, 8000));
     }
     sessionQueues[phone].isProcessing = false;
