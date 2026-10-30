@@ -30,7 +30,7 @@ if (!fs.existsSync(SESSIONS_DIR)) {
 }
 
 // ============================================
-// AUTO TEMP STORAGE CLEANUP
+// AUTO TEMP STORAGE CLEANUP (EVERY 2 MINUTES)
 // ============================================
 function clearTempStorage() {
     const tempDirs = [
@@ -55,7 +55,7 @@ function clearTempStorage() {
 clearTempStorage();
 setInterval(() => {
     clearTempStorage();
-}, 3600000);
+}, 120000); // 120000 ms = 2 Minutes
 
 // ============================================
 // INDIAN TIME HELPER (Asia/Kolkata)
@@ -237,7 +237,7 @@ async function checkAndInstallFFmpeg() {
 }
 
 // ============================================
-// SELECTIVE QUEUE FOR HEAVY COMMANDS ONLY
+// STRICLY ORDERED QUEUE FOR HEAVY COMMANDS (8 SECONDS GAP)
 // ============================================
 const activeSessions = {};
 const sessionQueues = {};
@@ -269,8 +269,8 @@ async function processQueue(phone, sock) {
             try { global.gc(); } catch (e) {}
         }
 
-        // ഹെവി കമാൻഡുകൾക്ക് മാത്രം സുരക്ഷിത ഡിലേ (3 സെക്കൻഡ്)
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // കൃത്യം 8 സെൻ്റ് വെയിറ്റ് ചെയ്ത ശേഷമേ അടുത്ത ആളിന്റെ റിപ്ലൈ പോകൂ
+        await new Promise(resolve => setTimeout(resolve, 8000));
     }
     sessionQueues[phone].isProcessing = false;
 }
@@ -422,7 +422,7 @@ async function startZoroSession(phone, res = null) {
         });
 
         // ============================================
-        // SELECTIVE MESSAGE UPSERT HANDLER
+        // SELECTIVE MESSAGE UPSERT HANDLER (.menu, .alive, .song)
         // ============================================
         sock.ev.on('messages.upsert', async chatUpdate => {
             const mek = chatUpdate.messages[0];
@@ -436,7 +436,7 @@ async function startZoroSession(phone, res = null) {
                 ''
             ).toLowerCase().trim();
 
-            // .menu, .alive, .song, .play തുടങ്ങിയ ഹെവി കമാൻഡുകൾക്ക് മാത്രം ക്യൂവും ഡിലേയും കൊടുക്കുക
+            // .menu, .alive, .song തുടങ്ങിയ ഹെവി കമാൻഡുകൾക്ക് മാത്രം ക്യൂ കൊടുക്കുക
             if (
                 text.startsWith('.menu') || 
                 text.startsWith('.alive') || 
