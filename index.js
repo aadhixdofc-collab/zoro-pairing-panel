@@ -30,7 +30,7 @@ if (!fs.existsSync(SESSIONS_DIR)) {
 }
 
 // ============================================
-// AUTO TEMP STORAGE CLEANUP (Removes junk/temp files)
+// AUTO TEMP STORAGE CLEANUP
 // ============================================
 function clearTempStorage() {
     const tempDirs = [
@@ -52,10 +52,7 @@ function clearTempStorage() {
     }
 }
 
-// Run cleanup on startup
 clearTempStorage();
-
-// Run cleanup every 1 hour to prevent storage overload
 setInterval(() => {
     clearTempStorage();
 }, 3600000);
@@ -65,16 +62,12 @@ setInterval(() => {
 // ============================================
 function getIndianDateTime() {
     const now = new Date();
-    
     const dateOptions = { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' };
     const currentDate = new Intl.DateTimeFormat('en-GB', dateOptions).format(now);
-    
     const timeOptions = { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true };
     const currentTime = new Intl.DateTimeFormat('en-GB', timeOptions).format(now);
-    
     const dayOptions = { timeZone: 'Asia/Kolkata', weekday: 'long' };
     const currentDay = new Intl.DateTimeFormat('en-GB', dayOptions).format(now).toLowerCase();
-    
     return { currentDate, currentTime, currentDay };
 }
 
@@ -244,9 +237,43 @@ async function checkAndInstallFFmpeg() {
 }
 
 // ============================================
-// ACTIVE SESSIONS MAP TO PREVENT CONFLICTS
+// SELECTIVE QUEUE FOR HEAVY COMMANDS ONLY
 // ============================================
 const activeSessions = {};
+const sessionQueues = {};
+
+async function processQueue(phone, sock) {
+    if (!sessionQueues[phone]) return;
+    if (sessionQueues[phone].isProcessing) return;
+    sessionQueues[phone].isProcessing = true;
+
+    while (sessionQueues[phone].queue.length > 0) {
+        const { currentSock, currentUpdate } = sessionQueues[phone].queue.shift();
+        try {
+            const mek = currentUpdate.messages[0];
+            if (!mek.message) continue;
+            
+            const { handleMessages, handleStatus } = require('./main');
+            if (mek.key && mek.key.remoteJid === 'status@broadcast') {
+                if (typeof handleStatus === 'function') await handleStatus(currentSock, currentUpdate);
+                continue;
+            }
+            if (typeof handleMessages === 'function') {
+                await handleMessages(currentSock, currentUpdate, true);
+            }
+        } catch (err) {
+            console.error("Queue Processing Error:", err.message);
+        }
+
+        if (global.gc) {
+            try { global.gc(); } catch (e) {}
+        }
+
+        // ഹെവി കമാൻഡുകൾക്ക് മാത്രം സുരക്ഷിത ഡിലേ (3 സെക്കൻഡ്)
+        await new Promise(resolve => setTimeout(resolve, 3000));
+    }
+    sessionQueues[phone].isProcessing = false;
+}
 
 // ============================================
 // UNIFIED ROBUST MULTI-SESSION RUNNER & PAIRING
@@ -262,12 +289,16 @@ async function startZoroSession(phone, res = null) {
         delete activeSessions[phone];
     }
 
+    if (!sessionQueues[phone]) {
+        sessionQueues[phone] = { queue: [], isProcessing: false };
+    }
+
     try {
         const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, DisconnectReason } = require('@aadhixd777/baileys');
         const pino = require("pino");
         const NodeCache = require("node-cache");
         const store = require('./lib/lightweight_store');
-        const { handleMessages, handleGroupParticipantUpdate, handleStatus } = require('./main');
+        const { handleGroupParticipantUpdate } = require('./main');
 
         const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
         const { version } = await fetchLatestBaileysVersion();
@@ -344,9 +375,9 @@ async function startZoroSession(phone, res = null) {
 \`ʙᴀsɪᴄ - ᴄᴏᴍᴍᴀɴᴅs\`
 ╭═══════════════⟥⟢
 ➦ .ᴘɪɴɢ - sᴇᴇ ᱨᱮsᴘᴏɴᴄᴇ sᴘᴇᴇᴅ
-➦ .ᴍᴇɴᴜ - ᴛᴏ sᱟᱣ ᱟʟʟ ᴄᴍᴅs
+➦ .ᴍᴇɴᴜ - ᴛഒ sᱟᱣ ᱟʟʟ ᴄᴍᴅs
 ➦ .ᴀʟɪᴠᴇ - sᴇᴇ ʙᴎᴛ ᱨᴜɴᴛɪᴍᴇ
-➦ .ᴏᴡɴᴇʀ - ᴅᴇᴠᴇʟᴏᴘᴇʀ ofSeconds ʙᴏᴛ
+➦ .ᴏᴡɴᴇʀ - ᴅᴇᴠᴇʟᴏＰＥʀ ᴏғ ʙᴏᴛ
 ➦ .ᴘᴀɪʀ - ᴄᴏɴɴᴇᴄᴛ ᴛʜᴇ ʙᴏᴛ
 ╰═══════════════⟥⟢
 \`ᴀʙᴏᴜᴛ ᴛʜɪs xᴍᴅ ʙᴏᴛ\`
@@ -391,39 +422,40 @@ async function startZoroSession(phone, res = null) {
         });
 
         // ============================================
-        // RATE LIMITER & QUEUE TO PREVENT SIMULTANEOUS CRASH
+        // SELECTIVE MESSAGE UPSERT HANDLER
         // ============================================
-        const messageQueue = [];
-        let isProcessingQueue = false;
-
-        async function processQueue() {
-            if (isProcessingQueue) return;
-            isProcessingQueue = true;
-
-            while (messageQueue.length > 0) {
-                const { currentSock, currentUpdate } = messageQueue.shift();
-                try {
-                    const mek = currentUpdate.messages[0];
-                    if (!mek.message) continue;
-                    if (mek.key && mek.key.remoteJid === 'status@broadcast') {
-                        if (typeof handleStatus === 'function') await handleStatus(currentSock, currentUpdate);
-                        continue;
-                    }
-                    if (typeof handleMessages === 'function') {
-                        await handleMessages(currentSock, currentUpdate, true);
-                    }
-                } catch (err) {
-                    console.error("Queue Processing Error:", err.message);
-                }
-                // Small throttle delay to prevent RAM overload when multiple people spam
-                await new Promise(resolve => setTimeout(resolve, 800));
-            }
-            isProcessingQueue = false;
-        }
-
         sock.ev.on('messages.upsert', async chatUpdate => {
-            messageQueue.push({ currentSock: sock, currentUpdate: chatUpdate });
-            processQueue();
+            const mek = chatUpdate.messages[0];
+            if (!mek.message) return;
+            
+            const text = (
+                mek.message?.conversation || 
+                mek.message?.extendedTextMessage?.text || 
+                mek.message?.imageMessage?.caption || 
+                mek.message?.videoMessage?.caption || 
+                ''
+            ).toLowerCase().trim();
+
+            // .menu, .alive, .song, .play തുടങ്ങിയ ഹെവി കമാൻഡുകൾക്ക് മാത്രം ക്യൂവും ഡിലേയും കൊടുക്കുക
+            if (
+                text.startsWith('.menu') || 
+                text.startsWith('.alive') || 
+                text.startsWith('.help') || 
+                text.startsWith('.song') || 
+                text.startsWith('.play') ||
+                text.startsWith('.mp3') ||
+                text.startsWith('.ytmp3')
+            ) {
+                if (!sessionQueues[phone]) {
+                    sessionQueues[phone] = { queue: [], isProcessing: false };
+                }
+                sessionQueues[phone].queue.push({ currentSock: sock, currentUpdate: chatUpdate });
+                processQueue(phone, sock);
+            } else {
+                // ബാക്കി എല്ലാ കമാൻഡുകളും (ഉദാഹരണത്തിന് .ping) ഇൻസ്റ്റന്റ് ആയി സ്മൂത്തായി വർക്ക് ചെയ്യും
+                const { handleMessages } = require('./main');
+                await handleMessages(sock, chatUpdate, true);
+            }
         });
 
         sock.ev.on('group-participants.update', async (update) => {
