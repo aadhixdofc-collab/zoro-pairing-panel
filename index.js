@@ -6,17 +6,6 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 
-// ============================================
-// CRASH PREVENTION (OOM & UNCAUGHT EXCEPTIONS)
-// ============================================
-process.on('uncaughtException', (err) => {
-    console.error('⚠️ Caught Uncaught Exception: ', err.message);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('⚠️ Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
 const app = express();
 const PORT = process.env.SERVER_PORT || process.env.PORT || 8000;
 
@@ -27,105 +16,6 @@ app.use(express.urlencoded({ extended: true }));
 const SESSIONS_DIR = path.join(__dirname, 'sessions');
 if (!fs.existsSync(SESSIONS_DIR)) {
     fs.mkdirSync(SESSIONS_DIR, { recursive: true });
-}
-
-// ============================================
-// DUAL TEMP STORAGE CLEANUP SYSTEM (SAFE MODE)
-// ============================================
-
-// 1. General Temp Cleaner (Every 2 Minutes - Safe 3 minutes gap for active files)
-function clearGeneralTempStorage() {
-    const tempDirs = [
-        path.join(__dirname, 'temp'),
-        path.join(__dirname, 'tmp'),
-        path.join(__dirname, 'temp_update'),
-        path.join(__dirname, 'ffmpeg_extract')
-    ];
-
-    for (const dir of tempDirs) {
-        if (!fs.existsSync(dir)) {
-            try {
-                fs.mkdirSync(dir, { recursive: true });
-            } catch (e) {}
-            continue;
-        }
-
-        try {
-            const files = fs.readdirSync(dir);
-            const now = Date.now();
-            for (const file of files) {
-                if (file === 'songs') continue; // songs ഫോൾഡർ ഇവിടെ സ്കിപ്പ് ചെയ്യും
-
-                const filePath = path.join(dir, file);
-                try {
-                    const stats = fs.statSync(filePath);
-                    // പ്രൊസസ്സിംഗിൽ ഇരിക്കുന്ന ഫയലുകൾ തടസ്സപ്പെടാതിരിക്കാൻ 3 മിനിറ്റിൽ കൂടുതൽ പഴക്കമുള്ളവ മാത്രം ഡിലീറ്റ് ചെയ്യുക
-                    if (now - stats.mtimeMs > 180000) {
-                        fs.rmSync(filePath, { recursive: true, force: true });
-                    }
-                } catch (err) {}
-            }
-        } catch (e) {}
-    }
-}
-
-// 2. Dedicated Song Folder Cleaner (Only clears song files after 5 minutes of safety gap)[span_1](start_span)[span_1](end_span)
-function clearSongTempStorage() {
-    const songDirs = [
-        path.join(__dirname, 'temp', 'songs'),
-        path.join(__dirname, 'tmp', 'songs')
-    ];
-
-    for (const dir of songDirs) {
-        if (!fs.existsSync(dir)) {
-            try {
-                fs.mkdirSync(dir, { recursive: true });
-            } catch (e) {}
-            continue;
-        }
-
-        try {
-            const files = fs.readdirSync(dir);
-            const now = Date.now();
-            for (const file of files) {
-                const filePath = path.join(dir, file);
-                try {
-                    const stats = fs.statSync(filePath);
-                    // സോംഗ് ഡൗൺലോഡിംഗിനും സെൻഡിംഗിനും പക്കാ ടൈം കിട്ടാൻ കൃത്യം 5 മിനിറ്റ് കഴിഞ്ഞു മാത്രം ഡിലീറ്റ് ചെയ്യും[span_2](start_span)[span_2](end_span)
-                    if (now - stats.mtimeMs > 300000) {
-                        fs.rmSync(filePath, { recursive: true, force: true });
-                        console.log(`🎵 Cleared old song temp file: ${file}`);
-                    }
-                } catch (err) {}
-            }
-        } catch (e) {}
-    }
-}
-
-// Run Cleaners on Startup & Intervals
-clearGeneralTempStorage();
-clearSongTempStorage();
-
-setInterval(() => {
-    clearGeneralTempStorage();
-}, 120000); // Every 2 Minutes for General Temp
-
-setInterval(() => {
-    clearSongTempStorage();
-}, 300000); // Every 5 Minutes for Songs Temp[span_3](start_span)[span_3](end_span)
-
-// ============================================
-// INDIAN TIME HELPER (Asia/Kolkata)
-// ============================================
-function getIndianDateTime() {
-    const now = new Date();
-    const dateOptions = { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' };
-    const currentDate = new Intl.DateTimeFormat('en-GB', dateOptions).format(now);
-    const timeOptions = { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true };
-    const currentTime = new Intl.DateTimeFormat('en-GB', timeOptions).format(now);
-    const dayOptions = { timeZone: 'Asia/Kolkata', weekday: 'long' };
-    const currentDay = new Intl.DateTimeFormat('en-GB', dayOptions).format(now).toLowerCase();
-    return { currentDate, currentTime, currentDay };
 }
 
 // ============================================
@@ -294,7 +184,7 @@ async function checkAndInstallFFmpeg() {
 }
 
 // ============================================
-// STRICLY ORDERED QUEUE FOR HEAVY COMMANDS (8 SECONDS GAP)
+// QUEUE SYSTEM ONLY FOR MENU & ALIVE (WITH 3s DELAY)
 // ============================================
 const activeSessions = {};
 const sessionQueues = {};
@@ -326,8 +216,8 @@ async function processQueue(phone, sock) {
             try { global.gc(); } catch (e) {}
         }
 
-        // കൃത്യം 8 സെക്കൻഡ് വെയിറ്റ് ചെയ്ത ശേഷമേ അടുത്ത ആളിന്റെ റിപ്ലൈ പോകൂ
-        await new Promise(resolve => setTimeout(resolve, 8000));
+        // മെനുവിനും അലൈവിനും ഇടയിൽ മാത്രം 3 സെക്കൻഡ് ഡിലേ
+        await new Promise(resolve => setTimeout(resolve, 3000));
     }
     sessionQueues[phone].isProcessing = false;
 }
@@ -339,13 +229,6 @@ async function startZoroSession(phone, res = null) {
     const sessionName = `session_${phone}`;
     const sessionPath = path.join(SESSIONS_DIR, sessionName);
 
-    if (activeSessions[phone]) {
-        try {
-            await activeSessions[phone].end(undefined);
-        } catch (e) {}
-        delete activeSessions[phone];
-    }
-
     if (!sessionQueues[phone]) {
         sessionQueues[phone] = { queue: [], isProcessing: false };
     }
@@ -355,7 +238,7 @@ async function startZoroSession(phone, res = null) {
         const pino = require("pino");
         const NodeCache = require("node-cache");
         const store = require('./lib/lightweight_store');
-        const { handleGroupParticipantUpdate } = require('./main');
+        const { handleMessages, handleGroupParticipantUpdate, handleStatus } = require('./main');
 
         const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
         const { version } = await fetchLatestBaileysVersion();
@@ -374,8 +257,6 @@ async function startZoroSession(phone, res = null) {
             syncFullHistory: false,
             msgRetryCounterCache,
         });
-
-        activeSessions[phone] = sock;
 
         if (store && store.bind) {
             store.bind(sock.ev);
@@ -397,7 +278,7 @@ async function startZoroSession(phone, res = null) {
                         res.json({ error: 'Failed to request pairing code. Try again.' });
                     }
                 }
-            }, 6000);
+            }, 3000);
         }
 
         let hasSentConnectMsg = false;
@@ -406,21 +287,23 @@ async function startZoroSession(phone, res = null) {
             const { connection, lastDisconnect } = update;
             
             if (connection === "open") {
-                delete activeSessions[phone];
-                const { currentDate, currentTime, currentDay } = getIndianDateTime();
-
                 console.log('\n╔════════════════════════════════════╗');
                 console.log(`║  ✅ ZORO MD CONNECTED SUCCESSFUL!  ║`);
                 console.log('╠════════════════════════════════════╣');
                 console.log(`║ 📱 Phone: ${phone}                 ║`);
-                console.log(`║ ⏰ Time: ${currentTime}, ${currentDate} ║`);
+                console.log(`║ ⏰ Time: ${new Date().toLocaleString()}  ║`);
                 console.log('╚════════════════════════════════════╝\n');
 
                 if (!hasSentConnectMsg) {
                     hasSentConnectMsg = true;
                     try {
                         const mode = process.env.MODE || "private";
+                        const currentDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+                        const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                        const currentDay = new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+
                         const headerText = `*ʜᴇʏ ᴢᴏʀᴏ <3*`;
+
                         const connectMessage = `
 \`ᴢᴏʀᴏxᴍᴅ -ᴍɪɴɪ sᴛᴀʀᴛᴇᴅ\`
 ╭═══════════════⟥⟢
@@ -432,9 +315,9 @@ async function startZoroSession(phone, res = null) {
 \`ʙᴀsɪᴄ - ᴄᴏᴍᴍᴀɴᴅs\`
 ╭═══════════════⟥⟢
 ➦ .ᴘɪɴɢ - sᴇᴇ ᱨᱮsᴘᴏɴᴄᴇ sᴘᴇᴇᴅ
-➦ .ᴍᴇɴᴜ - ᴛഒ sᱟᱣ ᱟʟʟ ᴄᴍᴅs
-➦ .ᴀʟɪᴠᴇ - sᴇᴇ ʙᴎᴛ ᱨᴜɴᴛɪᴍᴇ
-➦ .ᴏᴡɴᴇʀ - ᴅᴇᴠᴇʟᴏＰＥʀ ᴏғ ʙᴏᴛ
+➦ .ᴍᴇɴᴜ - ᴛᴏ sᴀᴡ ᱟʟʟ ᴄᴍᴅs
+➦ .ᴀʟɪᴠᴇ - sᴇᴇ ʙᴏᴛ ᱨᴜɴᴛɪᴍᴇ
+➦ .ᴏᴡɴᴇʀ - ᴅᴇᴠᴇʟᴏᴘᴇʀ ᴏғ ʙᴏᴛ
 ➦ .ᴘᴀɪʀ - ᴄᴏɴɴᴇᴄᴛ ᴛʜᴇ ʙᴏᴛ
 ╰═══════════════⟥⟢
 \`ᴀʙᴏᴜᴛ ᴛʜɪs xᴍᴅ ʙᴏᴛ\`
@@ -455,23 +338,29 @@ async function startZoroSession(phone, res = null) {
                                         image: { url: "https://files.catbox.moe/39mfsh.png" }, 
                                         caption: connectMessage 
                                     });
+                                    console.log(`📤 Connected messages successfully sent to target: ${targetJid}`);
                                 }, 1000);
-                            } catch (sendErr) {}
+                            } catch (sendErr) {
+                                console.error('Error sending messages inside timeout:', sendErr);
+                            }
                         }, 4000);
 
-                    } catch (err) {}
+                    } catch (err) {
+                        console.error('Failed to prepare connection message:', err);
+                    }
                 }
 
             } else if (connection === 'close') {
-                delete activeSessions[phone];
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 console.log(`⚠️ Connection closed for ${phone}, status: ${statusCode}`);
                 
                 if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
                     try {
                         fs.rmSync(sessionPath, { recursive: true, force: true });
-                        console.log(`🗑️ Logged out session cleaned up for: ${phone}`);
-                    } catch (e) {}
+                        console.log(`🗑️ Logged out session cleaned up & space freed for: ${phone}`);
+                    } catch (e) {
+                        console.error('Error cleaning session folder:', e);
+                    }
                 } else {
                     setTimeout(() => startZoroSession(phone), 5000);
                 }
@@ -479,46 +368,47 @@ async function startZoroSession(phone, res = null) {
         });
 
         // ============================================
-        // SELECTIVE MESSAGE UPSERT HANDLER (.menu, .alive, .song)
+        // MESSAGE UPSERT (MENU & ALIVE QUEUED, OTHERS SMOOTH)
         // ============================================
         sock.ev.on('messages.upsert', async chatUpdate => {
-            const mek = chatUpdate.messages[0];
-            if (!mek.message) return;
-            
-            const text = (
-                mek.message?.conversation || 
-                mek.message?.extendedTextMessage?.text || 
-                mek.message?.imageMessage?.caption || 
-                mek.message?.videoMessage?.caption || 
-                ''
-            ).toLowerCase().trim();
+            try {
+                const mek = chatUpdate.messages[0];
+                if (!mek.message) return;
+                
+                const text = (
+                    mek.message?.conversation || 
+                    mek.message?.extendedTextMessage?.text || 
+                    mek.message?.imageMessage?.caption || 
+                    mek.message?.videoMessage?.caption || 
+                    ''
+                ).toLowerCase().trim();
 
-            // .menu, .alive, .song തുടങ്ങിയ ഹെവി കമാൻഡുകൾക്ക് മാത്രം ക്യൂ കൊടുക്കുക
-            if (
-                text.startsWith('.menu') || 
-                text.startsWith('.alive') || 
-                text.startsWith('.help') || 
-                text.startsWith('.song') || 
-                text.startsWith('.play') ||
-                text.startsWith('.mp3') ||
-                text.startsWith('.ytmp3')
-            ) {
-                if (!sessionQueues[phone]) {
-                    sessionQueues[phone] = { queue: [], isProcessing: false };
+                // .menu അല്ലെങ്കിൽ .alive കമാൻഡുകൾ വന്നാൽ മാത്രം ക്യൂവിലേക്ക് വിടും
+                if (text.startsWith('.menu') || text.startsWith('.alive') || text.startsWith('.help')) {
+                    if (!sessionQueues[phone]) {
+                        sessionQueues[phone] = { queue: [], isProcessing: false };
+                    }
+                    sessionQueues[phone].queue.push({ currentSock: sock, currentUpdate: chatUpdate });
+                    processQueue(phone, sock);
+                } else {
+                    // ബാക്കി എല്ലാ മെസ്സേജുകളും കമാൻഡുകളും പഴയപോലെ ഡയറക്ട് സ്മൂത്ത് ആയി വർക്ക് ചെയ്യും
+                    if (mek.key && mek.key.remoteJid === 'status@broadcast') {
+                        if (typeof handleStatus === 'function') await handleStatus(sock, chatUpdate);
+                        return;
+                    }
+                    if (typeof handleMessages === 'function') await handleMessages(sock, chatUpdate, true);
                 }
-                sessionQueues[phone].queue.push({ currentSock: sock, currentUpdate: chatUpdate });
-                processQueue(phone, sock);
-            } else {
-                // ബാക്കി എല്ലാ കമാൻഡുകളും (ഉദാഹരണത്തിന് .ping) ഇൻസ്റ്റന്റ് ആയി സ്മൂത്തായി വർക്ക് ചെയ്യും
-                const { handleMessages } = require('./main');
-                await handleMessages(sock, chatUpdate, true);
+            } catch (err) {
+                console.error("Error in messages.upsert:", err);
             }
         });
 
         sock.ev.on('group-participants.update', async (update) => {
             try {
                 if (typeof handleGroupParticipantUpdate === 'function') await handleGroupParticipantUpdate(sock, update);
-            } catch (err) {}
+            } catch (err) {
+                console.error("Error in group-participants.update:", err);
+            }
         });
 
         return sock;
@@ -544,12 +434,8 @@ async function restoreExistingSessions() {
 }
 
 // ============================================
-// DASHBOARD UI & KEEP-ALIVE PING ROUTE
+// DASHBOARD UI
 // ============================================
-app.get('/ping', (req, res) => {
-    res.send('Zoro MD is active!');
-});
-
 app.get('/', (req, res) => {
     res.send(`
         <!DOCTYPE html>
